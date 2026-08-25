@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package detection;
+
+service DetectionStream {
+    rpc StreamDetections(stream DetectionMessage)
+        returns (stream DetectionAck);
+}
+
+message DetectionMessage {
+    oneof payload {
+        CustomerFlow customer_flow = 1;
+        WaitingSession waiting_session = 2;
+    }
+}
+
+
+message CustomerFlow {
+
+    string entry_time = 1;
+    int32 entry_count = 2;
+
+    string age_class = 3;
+    string gender = 4;
+    float gender_conf = 5;
+
+    string enter_emotion = 6;
+    float enter_emotion_conf = 7;
+
+    repeated float entry_face_box = 8;
+    repeated float entry_face_vector = 9;
+
+    string exit_time = 10;
+    int32 exit_count = 11;
+
+    string exit_emotion = 12;
+    float exit_emotion_conf = 13;
+
+    repeated float exit_face_box = 14;
+    repeated float exit_face_vector = 15;
+
+    float face_match_score = 16;
+}
+
+
+message WaitingSession {
+
+    int32 id = 1;
+
+    int32 entry_frame = 2;
+    int32 exit_frame = 3;
+
+    string entry_time = 4;
+    string exit_time = 5;
+
+    string duration = 6;
+    float duration_s = 7;
+}
+
+
+message DetectionAck {
+    bool ok = 1;
+    string message = 2;
+}

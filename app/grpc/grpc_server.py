@@ -10,6 +10,7 @@ from app.analytics.notifier import (
 from app.core.db import AsyncSessionLocal
 from app.grpc import detection_pb2, detection_pb2_grpc
 from app.services.detection_service import DetectionService
+from app.websocket.publisher import publish_dashboard_event
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("grpc_server")
@@ -53,14 +54,14 @@ class DetectionStreamServicer(
                             await db.rollback()
                             raise
 
-                        # Post-commit: trigger PostgreSQL notification for cross-container broadcast
-                        # and broadcast in-process if manager has active local clients
+                        # Post-commit: publish to Redis Pub/Sub and notify listeners
                         try:
+                            await publish_dashboard_event(branch_id=branch_id)
                             await notify_db_dashboard_update(db, branch_id=branch_id)
                             await broadcast_dashboard_update(db, branch_id=branch_id)
                         except Exception as ws_err:
                             logger.warning(
-                                "WebSocket / Analytics notification failed (non-critical): %s",
+                                "WebSocket / Redis notification failed (non-critical): %s",
                                 ws_err,
                             )
 

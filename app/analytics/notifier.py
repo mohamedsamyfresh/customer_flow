@@ -14,6 +14,7 @@ from app.analytics.service import AnalyticsService
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.websocket.manager import manager
+from app.websocket.publisher import publish_dashboard_event
 
 logger = logging.getLogger("analytics_notifier")
 CHANNEL_NAME = "dashboard_updates"
@@ -106,18 +107,9 @@ async def run_postgres_notification_listener(
                 except Exception:
                     branch_id = None
 
-                # Fetch fresh metrics and broadcast
+                # Fetch fresh metrics and broadcast via Redis Pub/Sub and in-process
                 try:
-                    async with AsyncSessionLocal() as session:
-                        analytics = AnalyticsService(session)
-                        metrics = await analytics.get_dashboard_metrics(branch_id=branch_id)
-                        event = DashboardEvent(
-                            type="dashboard_update",
-                            timestamp=datetime.now(timezone.utc).isoformat(),
-                            branch_id=branch_id,
-                            data=metrics,
-                        )
-                        await manager.broadcast(event.model_dump(), branch_id=branch_id)
+                    await publish_dashboard_event(branch_id=branch_id)
                 except Exception as b_err:
                     logger.warning("Error computing metrics for broadcast: %s", b_err)
 

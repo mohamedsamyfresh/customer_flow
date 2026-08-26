@@ -6,14 +6,17 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from sqlalchemy.pool import AsyncAdaptedQueuePool, NullPool
+
 from app.core.config import settings
+
+poolclass = NullPool if settings.AUTH_APP_ENV in ("development", "test") else AsyncAdaptedQueuePool
 
 engine = create_async_engine(
     settings.DATABASE_URL,
     pool_pre_ping=True,
     pool_recycle=1800,
-    pool_size=5,
-    max_overflow=5,
+    poolclass=poolclass,
     echo=False,
 )
 

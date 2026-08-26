@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from pydantic import Field
+import json
+from typing import Any
+
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,6 +11,30 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     GRPC_HOST: str = "grpc-server"
     GRPC_PORT: int = 50051
+
+    # Redis and WebSocket streaming configuration
+    REDIS_URL: str = Field(default="redis://redis:6379/0", description="Redis connection URL")
+    REDIS_KEY_NAMESPACE: str = Field(default="customer_flow", description="Redis key/channel namespace")
+    WEBSOCKET_TICKET_TTL_SECONDS: int = Field(default=30, description="WebSocket ticket TTL in seconds")
+    WEBSOCKET_ALLOWED_ORIGINS: list[str] | str = Field(
+        default=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:5173", "http://127.0.0.1:5173"],
+        description="Allowed origins for WebSocket handshake",
+    )
+
+    @field_validator("WEBSOCKET_ALLOWED_ORIGINS", mode="before")
+    @classmethod
+    def parse_allowed_origins(cls, value: Any) -> list[str]:
+        if isinstance(value, str):
+            value = value.strip()
+            if value.startswith("[") and value.endswith("]"):
+                try:
+                    return json.loads(value)
+                except Exception:
+                    pass
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        if isinstance(value, (list, tuple, set)):
+            return [str(origin).strip() for origin in value if str(origin).strip()]
+        return value
 
     # Shared freshfamily-auth configuration
     JWKS_URL: str | None = Field(default=None, description="JWKS endpoint URL for token verification")

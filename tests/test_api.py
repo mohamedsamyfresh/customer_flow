@@ -71,3 +71,18 @@ async def test_waiting_times_list_endpoint(client: AsyncClient):
     data = response.json()
     assert "total" in data
     assert "data" in data
+
+
+@pytest.mark.asyncio
+async def test_create_websocket_ticket_endpoints(client: AsyncClient):
+    # 1. Global ticket
+    r1 = await client.post("/api/v1/dashboard/ws/ticket")
+    assert r1.status_code == 201
+    assert "ticket" in r1.json()
+    assert len(r1.json()["ticket"]) >= 32
+
+    # 2. Branch ticket
+    r2 = await client.post("/api/v1/dashboard/branch-1/ws/ticket")
+    assert r2.status_code == 201
+    assert "ticket" in r2.json()
+

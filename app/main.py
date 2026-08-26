@@ -11,6 +11,7 @@ from app.analytics.notifier import run_postgres_notification_listener
 from app.api.router import api_router
 from app.core.auth import auth
 from app.core.db import close_db
+from app.core.redis import close_redis, init_redis
 from app.websocket.router import router as websocket_router
 
 logger = logging.getLogger("main")
@@ -20,6 +21,9 @@ logger = logging.getLogger("main")
 async def lifespan(app: FastAPI):
     # Eager JWKS prefetch on startup
     await auth.prefetch()
+
+    # Eager Redis connection verification
+    await init_redis()
 
     # Background event listener for PostgreSQL real-time notifications
     stop_event = asyncio.Event()
@@ -37,7 +41,8 @@ async def lifespan(app: FastAPI):
     except (asyncio.CancelledError, Exception):
         pass
 
-    # Clean httpx client shutdown
+    # Clean httpx client, redis, and database shutdown
+    await close_redis()
     await auth.aclose()
     await close_db()
 

@@ -1,7 +1,7 @@
-# Frontend Developer Integration Guide
+# Frontend Developer Integration Guide & Contract
 **Customer Flow & Waiting Time Analytics Dashboard**
 
----
+
 
 ## 1. Overview & Architecture
 
@@ -12,66 +12,90 @@ This backend processes real-time AI/Computer Vision events from surveillance and
 flowchart LR
     ML[AI / CV Pipeline] -->|gRPC Stream :50051| Backend[FastAPI & gRPC Backend]
     Backend -->|Async SQLAlchemy| DB[(PostgreSQL DB)]
-    Frontend[Frontend Dashboard\nReact / Next.js / Vue] -->|REST / WebSocket :8000| Backend
+    Backend -->|Redis Pub/Sub| Redis[(Redis 7 Broker)]
+    Frontend[Frontend Dashboard\nReact / Next.js / Vue] -->|REST + WebSocket :8000| Backend
 ```
 
 ### Local Development Ports
-- **FastAPI REST API**: `http://localhost:8000`
+- **FastAPI REST & WebSocket**: `http://localhost:8000` (WS: `ws://localhost:8000`)
 - **gRPC Server**: `localhost:50051` (ML ingestion)
 - **PostgreSQL**: `localhost:5433` (Docker host port)
+- **Redis**: `localhost:6379` (Docker host port)
 
 ---
 
-## 2. Backend Data Models
+## 2. Authentication & Real-Time Flow Contract
 
-The backend persists two primary data models defined in SQLAlchemy:
+The frontend interacts with the backend using a two-step flow:
 
-### A. Customer Flow (`Entry` Model)
-Represents a customer's journey from store entry to exit, including facial analytics, demographics, and emotional sentiment.
-
-| Field | Type | Description |
-| :--- | :--- | :--- |
-| `uuid` | `string (UUID)` | Unique record ID |
-| `entry_time` | `ISO 8601 Timestamp` | Timestamp when the customer entered |
-| `entry_count` | `number \| null` | Entry sequence counter / tracking index |
-| `age_class` | `string \| null` | Estimated age group (e.g., `"18-25"`, `"26-35"`, `"36-50"`, `"50+"`) |
-| `gender` | `string \| null` | Estimated gender (`"Male"`, `"Female"`) |
-| `gender_conf` | `number \| null` | Model confidence for gender (e.g. `0.94`) |
-| `enter_emotion` | `string \| null` | Emotion detected at entry (e.g., `"happy"`, `"neutral"`, `"sad"`, `"angry"`) |
-| `enter_emotion_conf` | `number \| null` | Confidence for enter emotion (e.g. `0.88`) |
-| `entry_face_box` | `string (JSON array)` | Normalized bounding box `[ymin, xmin, ymax, xmax]` |
-| `entry_face_vector` | `string (JSON array)` | Face feature embedding vector |
-| `exit_time` | `ISO 8601 Timestamp \| null` | Timestamp when the customer exited (`null` if still inside) |
-| `exit_count` | `number \| null` | Exit sequence counter |
-| `exit_emotion` | `string \| null` | Emotion detected at exit |
-| `exit_emotion_conf` | `number \| null` | Confidence for exit emotion |
-| `exit_face_box` | `string (JSON array)` | Exit face bounding box coordinates |
-| `exit_face_vector` | `string (JSON array)` | Exit face embedding vector |
-| `face_match_score` | `number \| null` | Similarity score matching entry & exit faces (e.g. `0.92`) |
+1. **Standard REST Endpoints**: Authenticated via standard `Authorization: Bearer <JWT_ACCESS_TOKEN>` headers.
+2. **Real-Time WebSocket Stream**:
+   - Step 1: Frontend calls `POST /api/v1/dashboard/{branch_id}/ws/ticket` (or `POST /api/v1/dashboard/ws/ticket`) with the Bearer JWT.
+   - Step 2: Backend validates JWT and returns an opaque, single-use ticket (`{ "ticket": "..." }`).
+   - Step 3: Frontend opens `new WebSocket("ws://localhost:8000/ws/dashboard/branch-1?ticket=" + ticket)`.
+   - Step 4: Backend sends the current `dashboard_snapshot` state immediately upon connection, then streams live `dashboard_update` events over Redis Pub/Sub.
+   - Step 5: On reconnect, frontend **always mints a fresh ticket** via HTTP POST. Old tickets are single-use and cannot be replayed.
 
 ---
 
-### B. Waiting Time (`WaitingTime` Model)
-Tracks queue sessions, checkout wait times, or zone dwell durations.
+## 3. TypeScript Interfaces (`types/analytics.ts`)
 
-| Field | Type | Description |
-| :--- | :--- | :--- |
-| `uuid` | `string (UUID)` | Unique record ID |
-| `id` | `number \| null` | Tracking session / Person ID |
-| `entry_frame` | `number \| null` | Video frame index at queue entry |
-| `exit_frame` | `number \| null` | Video frame index at queue exit |
-| `entry_time` | `string \| null` | Formatted entry timestamp or time string |
-| `exit_time` | `string \| null` | Formatted exit timestamp or time string |
-| `duration` | `string \| null` | Human-readable duration (e.g. `"00:03:45"`) |
-| `duration_s` | `number \| null` | Wait duration in total seconds (e.g. `225.5`) |
-
----
-
-## 3. TypeScript Interfaces
-
-Copy and paste these types directly into your frontend project (e.g., `types/analytics.ts`):
+Copy and paste these types directly into your frontend project:
 
 ```typescript
+export interface EmotionTransitions {
+  natural_to_angry: number;
+  angry_to_natural: number;
+  natural_to_natural: number;
+  angry_to_angry: number;
+}
+
+export interface LongestStay {
+  entry_time: string | null;
+  exit_time: string | null;
+  duration_seconds: number | null;
+  customer_id: string | null;
+  entry_count: number | null;
+  branch_id: string | null;
+  camera_id: string | null;
+}
+
+export interface HighestOccupancyPeriod {
+  start: string | null;
+  end: string | null;
+  occupancy: number;
+}
+
+export interface DashboardMetrics {
+  people_in_store: number;
+  total_entries_today: number;
+  total_exits_today: number;
+  emotion_transitions: EmotionTransitions;
+  longest_stay: LongestStay | null;
+  highest_occupancy_period: HighestOccupancyPeriod | null;
+}
+
+export interface DashboardEvent {
+  type: 'dashboard_snapshot' | 'dashboard_update';
+  timestamp: string;
+  branch_id: string | null;
+  data: DashboardMetrics;
+}
+
+export interface OccupancyBucket {
+  start: string;
+  end: string;
+  occupancy: number;
+}
+
+export interface OccupancyTimelineResponse {
+  bucket: string;
+  date: string;
+  branch_id: string | null;
+  peak_period: HighestOccupancyPeriod | null;
+  timeline: OccupancyBucket[];
+}
+
 export interface CustomerEntry {
   uuid: string;
   entry_time: string | null;
@@ -79,17 +103,29 @@ export interface CustomerEntry {
   age_class: string | null;
   gender: 'Male' | 'Female' | string | null;
   gender_conf: number | null;
-  enter_emotion: 'happy' | 'neutral' | 'sad' | 'surprised' | 'angry' | string | null;
+  enter_emotion: string | null;
   enter_emotion_conf: number | null;
-  entry_face_box?: number[] | null;
+  entry_face_box?: string | null;
+  entry_face_vector?: string | null;
   exit_time: string | null;
   exit_count: number | null;
   exit_emotion: string | null;
   exit_emotion_conf: number | null;
+  exit_face_box?: string | null;
+  exit_face_vector?: string | null;
   face_match_score: number | null;
-  // Computed / UI helpers:
+  branch_id: string | null;
+  camera_id: string | null;
+  // UI computed helpers:
   is_currently_inside?: boolean;
   dwell_time_seconds?: number | null;
+}
+
+export interface PaginatedResponse<T> {
+  total: number;
+  page: number;
+  limit: number;
+  data: T[];
 }
 
 export interface WaitingTimeSession {
@@ -102,153 +138,37 @@ export interface WaitingTimeSession {
   duration: string | null;
   duration_s: number | null;
 }
-
-export interface DashboardKPISummary {
-  total_visitors_today: number;
-  currently_in_store: number;
-  avg_dwell_time_seconds: number;
-  avg_waiting_time_seconds: number;
-  customer_satisfaction_score: number; // e.g. % positive exit emotions
-}
-
-export interface DemographicStats {
-  gender_distribution: { gender: string; count: number; percentage: number }[];
-  age_distribution: { age_class: string; count: number }[];
-}
-
-export interface EmotionSentimentComparison {
-  emotion: string;
-  entry_count: number;
-  exit_count: number;
-}
 ```
 
 ---
 
-## 4. API Endpoints Specification
+## 4. API Endpoints Specification & Contract
 
-### Base URL: `http://localhost:8000`
-
-### 1. Health Check
-- **Endpoint**: `GET /health`
-- **Response**: `{"status": "ok"}`
-
-### 2. Customer Flow / Entries
-- **Endpoint**: `GET /api/v1/entries`
-- **Query Parameters**:
-  - `page` (default: 1): Page number
-  - `limit` (default: 20): Items per page
-  - `status`: `"inside"` | `"exited"` | `"all"`
-  - `gender`: `"Male"` | `"Female"`
-  - `date_from`: ISO Date String (`2026-08-01T00:00:00Z`)
-  - `date_to`: ISO Date String (`2026-08-31T23:59:59Z`)
-- **Response**:
-```json
-{
-  "total": 150,
-  "page": 1,
-  "limit": 20,
-  "data": [
-    {
-      "uuid": "8c5e2194-d2e8-4687-9bb3-5a02e6eec285",
-      "entry_time": "2026-08-26T08:30:15Z",
-      "entry_count": 101,
-      "age_class": "25-35",
-      "gender": "Female",
-      "gender_conf": 0.96,
-      "enter_emotion": "neutral",
-      "enter_emotion_conf": 0.89,
-      "exit_time": "2026-08-26T08:47:30Z",
-      "exit_count": 98,
-      "exit_emotion": "happy",
-      "exit_emotion_conf": 0.92,
-      "face_match_score": 0.94
-    }
-  ]
-}
-```
-
-### 3. Waiting Times / Queue Sessions
-- **Endpoint**: `GET /api/v1/waiting-times`
-- **Query Parameters**: `limit`, `page`, `min_duration_s`
-- **Response**:
-```json
-{
-  "total": 85,
-  "page": 1,
-  "limit": 20,
-  "data": [
-    {
-      "uuid": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-      "id": 12,
-      "entry_frame": 1500,
-      "exit_frame": 4200,
-      "entry_time": "09:15:00",
-      "exit_time": "09:18:45",
-      "duration": "00:03:45",
-      "duration_s": 225.0
-    }
-  ]
-}
-```
-
-### 4. Dashboard KPIs & Analytics
-- **Endpoint**: `GET /api/v1/analytics/summary`
-- **Endpoint**: `GET /api/v1/analytics/demographics`
-- **Endpoint**: `GET /api/v1/analytics/emotions`
+| Endpoint | Method | Required Permission | Description |
+| :--- | :--- | :--- | :--- |
+| `/health` | `GET` | *Public* | Health check (`{"status": "ok"}`) |
+| `/api/v1/dashboard/ws/ticket` | `POST` | `analytics:read` | Mint single-use WebSocket ticket for global dashboard |
+| `/api/v1/dashboard/{branch_id}/ws/ticket` | `POST` | `analytics:read` | Mint single-use WebSocket ticket for branch dashboard |
+| `/api/dashboard/metrics` | `GET` | `analytics:read` | Live/historical KPI metrics |
+| `/api/v1/analytics/summary` | `GET` | `analytics:read` | Daily KPI summary metrics |
+| `/api/v1/analytics/occupancy` | `GET` | `analytics:read` | Occupancy timeline and peak traffic period |
+| `/api/v1/analytics/emotions` | `GET` | `analytics:read` | Sentiment emotion transitions |
+| `/api/v1/entries` | `GET` | `entries:read` | Paginated customer entries with filters |
+| `/api/v1/waiting-times` | `GET` | `waiting_times:read` | Paginated queue wait durations |
+| `/ws/dashboard` | `WS` | Single-use Ticket | Real-time global dashboard WebSocket stream |
+| `/ws/dashboard/{branch_id}` | `WS` | Single-use Ticket | Real-time branch-specific WebSocket stream |
 
 ---
 
-## 5. Recommended Frontend Tech Stack & Libraries
-
-1. **Framework**: React 18+ / Next.js 14+ (App Router) / Vite + React
-2. **Styling & Components**: Tailwind CSS + `shadcn/ui`
-3. **Data Fetching & State**: `@tanstack/react-query` or `swr` (handles auto-polling, cache & loading states)
-4. **Data Visualization / Charts**:
-   - `recharts` or `tremor` (ideal for metrics & dashboards)
-5. **Icons**: `lucide-react`
-6. **Date Formatting**: `date-fns` or `dayjs`
-
----
-
-## 6. Suggested UI Dashboard Layout & Features
-
-### Screen 1: Real-Time Executive Overview
-- **Metric Cards (KPIs)**:
-  - 👥 **Current Live Occupancy**: Number of customers inside (`exit_time === null`).
-  - 🚶 **Total Daily Entries**: Total customer count for current day.
-  - ⏱️ **Average Dwell Time**: Average difference between `exit_time` and `entry_time`.
-  - ⏳ **Average Queue Wait Time**: Average `duration_s` from waiting sessions.
-  - 😊 **Satisfaction Index**: % of customers exiting with positive emotion compared to entry.
-- **Real-Time Activity Stream**: Live feed displaying newly detected entries/exits as they happen.
-
-### Screen 2: Demographics & Customer Intelligence
-- **Gender Breakdown**: Donut / Pie chart with confidence intervals.
-- **Age Distribution**: Bar chart comparing age groups (`<18`, `18-25`, `25-35`, `35-50`, `50+`).
-- **Peak Hours Heatmap**: Entry traffic heatmap grouped by hour of the day and day of week.
-
-### Screen 3: Sentiment & Experience Analytics
-- **Entry vs Exit Emotion Comparison**: Grouped column chart displaying emotions (`happy`, `neutral`, `sad`, `surprised`, `angry`).
-- **Emotion Conversion / Delta**: Tracks customer satisfaction shift during their visit.
-
-### Screen 4: Queue & Waiting Time Performance
-- **Queue Duration Trend**: Area chart showing hourly average wait times against acceptable SLA thresholds (e.g. alert if wait time > 5 mins).
-
-### Screen 5: Visitors Log & Audit Table
-- Data table with search, date-range picker, filter by gender/emotion, status badge (`Inside` vs `Exited`), and pagination.
-
----
-
-## 7. Frontend Integration Example Code
+## 5. Ready-to-Use Frontend Integration Code
 
 ### A. Environment Configuration (`.env.local`)
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8000
-# Or for Vite:
-# VITE_API_URL=http://localhost:8000
+NEXT_PUBLIC_WS_URL=ws://localhost:8000
 ```
 
-### B. API Client (`lib/api.ts`)
+### B. Authenticated API Client (`lib/api.ts`)
 ```typescript
 import axios from 'axios';
 
@@ -258,42 +178,204 @@ export const apiClient = axios.create({
     'Content-Type': 'application/json',
   },
 });
+
+apiClient.interceptors.request.use((config) => {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+  if (token && config.headers) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
 ```
 
-### C. Live Polling Hook using TanStack Query
+### C. REST Query Hooks using TanStack Query (`hooks/useAnalytics.ts`)
 ```typescript
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api';
-import { CustomerEntry } from '@/types/analytics';
+import {
+  CustomerEntry,
+  DashboardMetrics,
+  OccupancyTimelineResponse,
+  PaginatedResponse,
+  WaitingTimeSession,
+} from '@/types/analytics';
 
-export function useCustomerEntries() {
+// 1. Dashboard Metrics Summary
+export function useDashboardMetrics(branchId?: string, date?: string) {
   return useQuery({
-    queryKey: ['customer-entries'],
+    queryKey: ['dashboard-metrics', branchId, date],
     queryFn: async () => {
-      const response = await apiClient.get<{ data: CustomerEntry[] }>('/api/v1/entries');
-      return response.data.data;
+      const response = await apiClient.get<DashboardMetrics>('/api/dashboard/metrics', {
+        params: { branch_id: branchId, date },
+      });
+      return response.data;
     },
-    // Auto-refresh every 5 seconds for live dashboard updates:
-    refetchInterval: 5000,
   });
+}
+
+// 2. Occupancy Timeline
+export function useOccupancyTimeline(branchId?: string, date?: string, bucket: string = '1h') {
+  return useQuery({
+    queryKey: ['occupancy-timeline', branchId, date, bucket],
+    queryFn: async () => {
+      const response = await apiClient.get<OccupancyTimelineResponse>('/api/v1/analytics/occupancy', {
+        params: { branch_id: branchId, date, bucket },
+      });
+      return response.data;
+    },
+  });
+}
+
+// 3. Paginated Customer Entries
+export function useCustomerEntries(params?: {
+  page?: number;
+  limit?: number;
+  status?: 'inside' | 'exited' | 'all';
+  gender?: string;
+  branch_id?: string;
+}) {
+  return useQuery({
+    queryKey: ['customer-entries', params],
+    queryFn: async () => {
+      const response = await apiClient.get<PaginatedResponse<CustomerEntry>>('/api/v1/entries', {
+        params,
+      });
+      return response.data;
+    },
+  });
+}
+
+// 4. Paginated Queue Waiting Times
+export function useWaitingTimes(params?: { page?: number; limit?: number; min_duration_s?: number }) {
+  return useQuery({
+    queryKey: ['waiting-times', params],
+    queryFn: async () => {
+      const response = await apiClient.get<PaginatedResponse<WaitingTimeSession>>('/api/v1/waiting-times', {
+        params,
+      });
+      return response.data;
+    },
+  });
+}
+```
+
+### D. Production-Grade WebSocket Real-Time Hook (`hooks/useRealtimeDashboard.ts`)
+```typescript
+import { useEffect, useRef, useState } from 'react';
+import { apiClient } from '@/lib/api';
+import { DashboardEvent, DashboardMetrics } from '@/types/analytics';
+
+export function useRealtimeDashboard(branchId?: string) {
+  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
+  const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function connect() {
+      try {
+        setError(null);
+
+        // Step 1: Mint a single-use opaque ticket via authenticated HTTP POST
+        const ticketUrl = branchId
+          ? `/api/v1/dashboard/${branchId}/ws/ticket`
+          : `/api/v1/dashboard/ws/ticket`;
+
+        const { data } = await apiClient.post<{ ticket: string }>(ticketUrl);
+        if (isCancelled) return;
+
+        // Step 2: Build WebSocket URL
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsBase = process.env.NEXT_PUBLIC_WS_URL || `${wsProtocol}//${window.location.host}`;
+        const wsPath = branchId ? `/ws/dashboard/${branchId}` : `/ws/dashboard`;
+        const wsUrl = `${wsBase}${wsPath}?ticket=${encodeURIComponent(data.ticket)}`;
+
+        const socket = new WebSocket(wsUrl);
+        wsRef.current = socket;
+
+        socket.onopen = () => {
+          if (!isCancelled) {
+            setIsConnected(true);
+            setError(null);
+          }
+        };
+
+        socket.onmessage = (event) => {
+          try {
+            const payload: DashboardEvent = JSON.parse(event.data);
+            if (payload && payload.data && !isCancelled) {
+              setMetrics(payload.data);
+            }
+          } catch (err) {
+            console.error('Failed to parse WebSocket message frame:', err);
+          }
+        };
+
+        socket.onerror = (err) => {
+          console.warn('WebSocket encountered error:', err);
+        };
+
+        socket.onclose = (event) => {
+          if (isCancelled) return;
+          setIsConnected(false);
+          wsRef.current = null;
+
+          // If closed abnormally (e.g. 1013 Try Again Later or network blip),
+          // reconnect by requesting a BRAND NEW ticket
+          if (event.code !== 1000) {
+            console.info(`WebSocket closed (code: ${event.code}). Reconnecting in 3s with a fresh ticket...`);
+            reconnectTimeoutRef.current = setTimeout(connect, 3000);
+          }
+        };
+      } catch (err: any) {
+        if (!isCancelled) {
+          setError(err?.response?.data?.detail || 'Failed to authenticate WebSocket ticket');
+          reconnectTimeoutRef.current = setTimeout(connect, 5000);
+        }
+      }
+    }
+
+    connect();
+
+    return () => {
+      isCancelled = true;
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      if (wsRef.current) {
+        wsRef.current.close(1000, 'Component unmounted');
+        wsRef.current = null;
+      }
+    };
+  }, [branchId]);
+
+  return { metrics, isConnected, error };
 }
 ```
 
 ---
 
-## 8. Backend Configuration Note for Frontend Devs
+## 6. Suggested UI Dashboard Layout & Feature Components
 
-### Enabling CORS in FastAPI
-If calling the backend directly from a browser (`localhost:3000` / `localhost:5173`), ensure CORS middleware is configured in the FastAPI backend (`app/main.py`):
+### Screen 1: Executive Overview Dashboard
+* **Live KPI Metric Cards**:
+  * 👥 **People Currently Inside**: `metrics.people_in_store` (Live WebSocket update)
+  * 🚶 **Total Daily Entries**: `metrics.total_entries_today`
+  * 🚪 **Total Daily Exits**: `metrics.total_exits_today`
+  * ⏱️ **Longest Customer Stay**: `metrics.longest_stay.duration_seconds` (Formatted e.g. "1h 30m")
+  * 📈 **Peak Occupancy Period**: `metrics.highest_occupancy_period.occupancy`
+* **Real-Time Sentiment Transition Radar / Bar**:
+  * `metrics.emotion_transitions.natural_to_angry`
+  * `metrics.emotion_transitions.angry_to_natural`
+  * `metrics.emotion_transitions.natural_to_natural`
+  * `metrics.emotion_transitions.angry_to_angry`
 
-```python
-from fastapi.middleware.cors import CORSMiddleware
+### Screen 2: Occupancy Timeline Chart
+* Area / Bar Chart displaying concurrent occupancy per 15m/1h interval.
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173", "*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-```
+### Screen 3: Customer Journey & Demographics Audit Table
+* Data table with search, gender filtering, inside/exited status badge, and date picker.
+
+### Screen 4: Queue & Waiting Time Performance
+* Average queue dwell duration vs SLA threshold alarms.

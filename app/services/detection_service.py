@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -226,9 +226,12 @@ class DetectionService:
     ) -> datetime | None:
         if not value:
             return None
-        return datetime.fromisoformat(
+        dt = datetime.fromisoformat(
             value.replace("Z", "+00:00")
         )
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
 
     @staticmethod
     def _string_or_none(

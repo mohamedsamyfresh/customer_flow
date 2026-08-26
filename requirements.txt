@@ -7,3 +7,9 @@ pydantic-settings
 grpcio
 grpcio-tools
 asyncpg
+httpx
+pytest
+pytest-asyncio
+pyjwt[crypto]>=2.8.0
+cryptography>=42.0.0
+./packages/freshfamily_auth-0.1.0-py3-none-any.whl

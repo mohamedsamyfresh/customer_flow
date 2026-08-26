@@ -3,9 +3,12 @@ import logging
 
 import grpc
 
+from app.analytics.notifier import (
+    broadcast_dashboard_update,
+    notify_db_dashboard_update,
+)
 from app.core.db import AsyncSessionLocal
-from app.grpc import detection_pb2
-from app.grpc import detection_pb2_grpc
+from app.grpc import detection_pb2, detection_pb2_grpc
 from app.services.detection_service import DetectionService
 
 logging.basicConfig(level=logging.INFO)
@@ -33,12 +36,14 @@ class DetectionStreamServicer(
                         "Detection received from ML"
                     )
 
+                    branch_id = None
                     async with AsyncSessionLocal() as db:
                         try:
                             service = DetectionService(db)
                             record = await service.process(
                                 detection
                             )
+                            branch_id = getattr(record, "branch_id", None)
                             await db.commit()
                             logger.info(
                                 "Detection stored successfully: %s",
@@ -47,6 +52,17 @@ class DetectionStreamServicer(
                         except Exception:
                             await db.rollback()
                             raise
+
+                        # Post-commit: trigger PostgreSQL notification for cross-container broadcast
+                        # and broadcast in-process if manager has active local clients
+                        try:
+                            await notify_db_dashboard_update(db, branch_id=branch_id)
+                            await broadcast_dashboard_update(db, branch_id=branch_id)
+                        except Exception as ws_err:
+                            logger.warning(
+                                "WebSocket / Analytics notification failed (non-critical): %s",
+                                ws_err,
+                            )
 
                     yield detection_pb2.DetectionAck(
                         ok=True,

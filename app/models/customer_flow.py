@@ -1,7 +1,7 @@
 import uuid as uuid_module
 from datetime import datetime
 
-from sqlalchemy import Integer, Numeric, String, Text, TIMESTAMP
+from sqlalchemy import TIMESTAMP, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,12 +18,26 @@ class Entry(Base):
         nullable=False,
     )
 
+    branch_id: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        index=True,
+    )
+
+    camera_id: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        index=True,
+    )
+
     entry_time: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP
+        TIMESTAMP,
+        index=True,
     )
 
     entry_count: Mapped[int | None] = mapped_column(
-        Integer
+        Integer,
+        index=True,
     )
 
     age_class: Mapped[str | None] = mapped_column(
@@ -55,11 +69,13 @@ class Entry(Base):
     )
 
     exit_time: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP
+        TIMESTAMP,
+        index=True,
     )
 
     exit_count: Mapped[int | None] = mapped_column(
-        Integer
+        Integer,
+        index=True,
     )
 
     exit_emotion: Mapped[str | None] = mapped_column(

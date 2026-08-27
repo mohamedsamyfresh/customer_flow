@@ -26,44 +26,8 @@ router = APIRouter(tags=["WebSocket & Real-Time Streaming"])
 # ==========================================================
 # PHASE 3: AUTHENTICATED TICKET CREATION ENDPOINTS
 # ==========================================================
-
 @router.post(
-    "/api/v1/dashboard/ws/ticket",
-    response_model=WebSocketTicketResponse,
-    status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(auth.require_permission(Permission.ANALYTICS_READ))],
-    summary="Mint WebSocket streaming ticket for global or specified dashboard",
-)
-@router.post(
-    "/api/v1/dashboard/{branch_id}/ws/ticket",
-    response_model=WebSocketTicketResponse,
-    status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(auth.require_permission(Permission.ANALYTICS_READ))],
-    summary="Mint WebSocket streaming ticket for branch-specific dashboard",
-)
-@router.post(
-    "/api/v1/branches/{branch_id}/ws/ticket",
-    response_model=WebSocketTicketResponse,
-    status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(auth.require_permission(Permission.ANALYTICS_READ))],
-    summary="Mint WebSocket ticket for branch resource",
-)
-@router.post(
-    "/api/v1/analytics/{branch_id}/ws/ticket",
-    response_model=WebSocketTicketResponse,
-    status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(auth.require_permission(Permission.ANALYTICS_READ))],
-    summary="Mint WebSocket ticket for analytics resource",
-)
-@router.post(
-    "/dashboard/{branch_id}/ws/ticket",
-    response_model=WebSocketTicketResponse,
-    status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(auth.require_permission(Permission.ANALYTICS_READ))],
-    summary="Mint WebSocket ticket for dashboard resource",
-)
-@router.post(
-    "/ws/ticket",
+    "/ws/{branch_id}/ticket",
     response_model=WebSocketTicketResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(auth.require_permission(Permission.ANALYTICS_READ))],
@@ -71,9 +35,7 @@ router = APIRouter(tags=["WebSocket & Real-Time Streaming"])
 )
 async def create_websocket_ticket(
     user: CurrentUser,
-    branch_id: str | None = None,
-    body: WebSocketTicketRequest | None = None,
-    branch: str | None = Query(default=None, alias="branch_id"),
+    branch_id
 ) -> WebSocketTicketResponse:
     """
     Step 1 of WebSocket connection flow:
@@ -82,7 +44,7 @@ async def create_websocket_ticket(
     and returns a short-lived, single-use, cryptographically secure opaque ticket.
     """
     # Resolve target resource / branch identifier
-    target_resource = branch_id or (body.branch_id if body else None) or branch or "global"
+    target_resource = branch_id 
     target_resource = target_resource.strip()
 
     # Validate resource eligibility
@@ -258,7 +220,7 @@ async def _handle_websocket_stream(
         logger.info("WebSocket streaming finalized (resource=%s)", target_resource)
 
 
-@router.websocket("/ws/dashboard")
+@router.websocket("/ws")
 async def websocket_dashboard(
     websocket: WebSocket,
     ticket: str | None = Query(default=None),
@@ -277,7 +239,7 @@ async def websocket_dashboard(
     )
 
 
-@router.websocket("/ws/dashboard/{branch_id}")
+@router.websocket("/ws/{branch_id}")
 async def websocket_dashboard_branch(
     websocket: WebSocket,
     branch_id: str,
@@ -295,47 +257,3 @@ async def websocket_dashboard_branch(
         bucket=bucket,
     )
 
-
-@router.websocket("/api/v1/dashboard/ws")
-async def websocket_api_dashboard(
-    websocket: WebSocket,
-    ticket: str | None = Query(default=None),
-    branch_id: str | None = Query(default=None),
-    bucket: str = Query(default="1h"),
-):
-    await _handle_websocket_stream(
-        websocket=websocket,
-        ticket=ticket,
-        branch_id=branch_id,
-        bucket=bucket,
-    )
-
-
-@router.websocket("/api/v1/dashboard/{branch_id}/ws")
-async def websocket_api_dashboard_branch(
-    websocket: WebSocket,
-    branch_id: str,
-    ticket: str | None = Query(default=None),
-    bucket: str = Query(default="1h"),
-):
-    await _handle_websocket_stream(
-        websocket=websocket,
-        ticket=ticket,
-        branch_id=branch_id,
-        bucket=bucket,
-    )
-
-
-@router.websocket("/dashboard/{resource_id}/ws")
-async def websocket_resource_dashboard(
-    websocket: WebSocket,
-    resource_id: str,
-    ticket: str | None = Query(default=None),
-    bucket: str = Query(default="1h"),
-):
-    await _handle_websocket_stream(
-        websocket=websocket,
-        ticket=ticket,
-        branch_id=resource_id,
-        bucket=bucket,
-    )

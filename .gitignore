@@ -27,6 +27,8 @@ Thumbs.db
 # Docker
 *.log
 
+packages/
+
 # Build
 dist/
 build/
@@ -34,3 +36,6 @@ build/
 
 # Alembic
 *.db
+
+
+opencode.json

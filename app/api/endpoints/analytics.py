@@ -27,11 +27,7 @@ def parse_date_str(date_str: str | None) -> date | None:
         return None
 
 
-@router.get(
-    "/api/dashboard/metrics",
-    response_model=DashboardMetrics,
-    dependencies=[Depends(auth.require_permission(Permission.ANALYTICS_READ))],
-)
+
 @router.get(
     "/api/v1/analytics/summary",
     response_model=DashboardMetrics,
